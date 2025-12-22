@@ -29,10 +29,13 @@ const io = new Server(server, {
     }
 });
 
+// Sajikan file statis (CSS/JS/Gambar jika ada dalam satu folder)
 app.use(express.static(__dirname));
 
+// --- ROUTE UTAMA: BUKA GAME SAAT URL DIAKSES ---
 app.get('/', (req, res) => {
-    res.send('Server Katla Backend is Running!'); 
+    // Pastikan nama file sesuai dengan file HTML Anda (kosong.html atau index.html)
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // --- KONFIGURASI FILTER ---

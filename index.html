@@ -588,7 +588,7 @@
                     <label class="block text-xs font-bold text-slate-300 mb-2 uppercase">Koneksi / Provider</label>
                     <select id="conn-provider" class="w-full bg-slate-800 border border-slate-600 rounded-lg p-3 text-white text-sm font-bold" onchange="toggleProviderSettings()">
                         <option value="INDOFINITY">IndoFinity (App Desktop)</option>
-                        <option value="BACKEND">Custom Backend (Node.js)</option>
+                        <option value="BACKEND">Custom Backend (Railway/URL)</option>
                     </select>
                 </div>
 
@@ -608,10 +608,10 @@
                 <!-- IP & Port Config -->
                 <div class="grid grid-cols-3 gap-2">
                     <div class="col-span-2">
-                        <label class="block text-xs font-bold text-slate-300 mb-2 uppercase">IP Host (PC)</label>
+                        <label id="conn-ip-label" class="block text-xs font-bold text-slate-300 mb-2 uppercase">IP Host (PC)</label>
                         <div class="flex gap-2">
                             <input type="text" id="conn-ip" value="localhost" class="flex-1 bg-slate-800 border border-slate-600 rounded-lg p-3 text-white text-sm font-mono placeholder-slate-500">
-                            <button onclick="autoDetectIP()" class="bg-cyan-600 hover:bg-cyan-500 px-2 rounded-lg text-white font-bold text-[10px]">AUTO</button>
+                            <button id="btn-auto-ip" onclick="autoDetectIP()" class="bg-cyan-600 hover:bg-cyan-500 px-2 rounded-lg text-white font-bold text-[10px]">AUTO</button>
                         </div>
                     </div>
                     <div>
@@ -1144,14 +1144,23 @@
             const portInput = document.getElementById('conn-port');
             const hint = document.getElementById('setup-hint');
             const backendUserGroup = document.getElementById('backend-user-group');
+            const ipLabel = document.getElementById('conn-ip-label');
+            const ipInput = document.getElementById('conn-ip');
 
             if (provider === 'INDOFINITY') {
+                portInput.parentElement.classList.remove('hidden');
                 portInput.value = '62024';
+                ipLabel.textContent = "IP Host (PC)";
+                ipInput.placeholder = "localhost";
                 hint.innerHTML = '<b>Tips IndoFinity:</b> Pastikan aplikasi sudah "Listening".';
                 backendUserGroup.classList.add('hidden');
             } else {
-                portInput.value = '3000';
-                hint.innerHTML = '<b>Tips Backend:</b> Pastikan `node server.js` sudah jalan.';
+                // Modifikasi tampilan untuk Backend/Railway
+                portInput.parentElement.classList.add('hidden'); // Sembunyikan port karena ikut URL
+                ipLabel.textContent = "Server URL (Railway)";
+                ipInput.placeholder = "https://namaproject.up.railway.app";
+                ipInput.value = ""; // Kosongkan biar user paste URL
+                hint.innerHTML = '<b>Tips Backend:</b> Copy URL dari Dashboard Railway (tanpa Port).';
                 backendUserGroup.classList.remove('hidden');
             }
         }
@@ -1246,15 +1255,26 @@
                 } catch(e) { showToast("Connection Failed"); }
 
             } else {
-                // --- CUSTOM BACKEND SOCKET.IO ---
+                // --- CUSTOM BACKEND SOCKET.IO (RAILWAY SUPPORT) ---
                 if (!targetUsername) {
                     showToast("❌ Username TikTok Wajib Diisi!");
                     return;
                 }
                 
                 try {
+                    let connectionUrl;
+                    // Logika pintar: Jika user paste URL lengkap (https://...), pakai itu.
+                    // Jika user cuma ketik IP/localhost, tambahkan http + port.
+                    if (ip.startsWith('http')) {
+                        connectionUrl = ip;
+                    } else {
+                        connectionUrl = `http://${ip}:${port}`;
+                    }
+                    
+                    console.log("Connecting to:", connectionUrl);
+
                     // Connect to Node.js Backend
-                    state.liveSocketIO = io(`http://${ip}:${port}`);
+                    state.liveSocketIO = io(connectionUrl);
                     
                     state.liveSocketIO.on('connect', () => {
                         // Tell backend to switch username

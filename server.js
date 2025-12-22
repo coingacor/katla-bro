@@ -6,19 +6,33 @@ const path = require('path');
 // --- LOAD LIBRARY ---
 let WebcastPushConnection;
 try {
-    WebcastPushConnection = require('./TikTok-Live-Connector-1.2.3/src/index.js').WebcastPushConnection;
+    // Coba load dari node_modules dulu (Standard Railway/NPM)
+    WebcastPushConnection = require('tiktok-live-connector').WebcastPushConnection;
 } catch (e) {
-    console.error("[ERROR] Gagal load library. Pastikan folder TikTok-Live-Connector-1.2.3 ada.");
-    process.exit(1);
+    try {
+        // Fallback ke folder lokal jika user upload folder manual
+        WebcastPushConnection = require('./TikTok-Live-Connector-1.2.3/src/index.js').WebcastPushConnection;
+    } catch (e2) {
+        console.error("[ERROR] Gagal load library TikTok-Live-Connector.");
+        process.exit(1);
+    }
 }
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+// --- CONFIG CORS (PENTING UNTUK RAILWAY/HOSTING) ---
+const io = new Server(server, {
+    cors: {
+        origin: "*", // Izinkan koneksi dari mana saja (Frontend)
+        methods: ["GET", "POST"]
+    }
+});
 
 app.use(express.static(__dirname));
+
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.send('Server Katla Backend is Running!'); 
 });
 
 // --- KONFIGURASI FILTER ---
@@ -28,9 +42,6 @@ const BANNED_WORDS = [
     "GOBLOK", "SETAN", "IBLIS", "DADAH", "MAMPUS", "***"
 ];
 
-// OPTIMISASI EKSTREM: Batas maksimal karakter mentah hanya 20.
-// Komentar seperti "Bang tolong jawabannya itu adalah BACOK ya" (43 huruf) akan LANGSUNG DITOLAK.
-// Hanya komentar seperti "BACOK", "B A C O K", atau "Jawab BACOK" yang akan diproses.
 const MAX_RAW_LENGTH = 20; 
 
 // --- STATE ---
@@ -66,31 +77,22 @@ function connectToTikTok(username) {
     tiktokLiveConnection.on('chat', data => {
         const rawComment = data.comment.trim().toUpperCase();
 
-        // --- FILTER AWAL (SANGAT KETAT) ---
-        // Jika lebih dari 20 huruf, langsung return (abaikan). Hemat CPU.
         if (rawComment.length > MAX_RAW_LENGTH) return;
-        
-        // Filter terlalu pendek (< 3 huruf tidak mungkin jadi jawaban game)
         if (rawComment.length < 3) return;
         
-        // --- LOGIKA SMART BYPASS ---
         let finalGuess = null;
-
         const isValidWord = (word) => {
             return word.length >= 4 && word.length <= 8 && /^[A-Z]+$/.test(word);
         };
 
-        // STRATEGI 1: Anti-Spasi ("B A C O K" -> "BACOK")
         const noSpaceComment = rawComment.replace(/\s+/g, ''); 
         
         if (isValidWord(noSpaceComment)) {
             finalGuess = noSpaceComment;
         } 
         
-        // STRATEGI 2: Detektif Kalimat Pendek ("Ini BACOK")
         if (!finalGuess) {
             const words = rawComment.split(/[\s.,!?]+/); 
-            // Cari kata valid dari belakang
             for (let i = words.length - 1; i >= 0; i--) {
                 if (isValidWord(words[i])) {
                     finalGuess = words[i];
@@ -99,7 +101,6 @@ function connectToTikTok(username) {
             }
         }
 
-        // --- FINAL CHECK & EMIT ---
         if (finalGuess) {
             const isBanned = BANNED_WORDS.some(badWord => finalGuess.includes(badWord));
 
@@ -139,6 +140,7 @@ function handleReconnect(username, msg) {
 }
 
 io.on('connection', (socket) => {
+    console.log('Frontend Connected:', socket.id);
     if (activeTargetUser) socket.emit('status', { type: 'warning', msg: `Reconnecting: @${activeTargetUser}` });
     socket.on('change_username', (username) => {
         activeTargetUser = null;
@@ -146,7 +148,8 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = 3000;
+// --- PENTING UNTUK RAILWAY: GUNAKAN PROCESS.ENV.PORT ---
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`\n=== SERVER ULTRA OPTIMIZED (MAX 20 CHARS) SIAP ===`);
+    console.log(`\n=== SERVER RUNNING ON PORT ${PORT} ===`);
 });

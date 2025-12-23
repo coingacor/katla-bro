@@ -54,7 +54,7 @@ const BANNED_WORDS = [
     "GOBLOK", "SETAN", "IBLIS", "DADAH", "MAMPUS", "***"
 ];
 
-const MAX_RAW_LENGTH = 20; 
+const MAX_RAW_LENGTH = 50; // Naikkan sedikit agar command panjang terbaca
 
 // --- STATE ---
 let tiktokLiveConnection = null;
@@ -89,6 +89,21 @@ function connectToTikTok(username) {
     tiktokLiveConnection.on('chat', data => {
         const rawComment = data.comment.trim().toUpperCase();
 
+        // --- 1. HANDLING COMMAND (!myrank dll) ---
+        // Jika chat dimulai dengan tanda seru '!', kirim langsung ke frontend
+        // tanpa validasi kata 5 huruf.
+        if (rawComment.startsWith('!')) {
+             console.log(`[COMMAND] ${data.uniqueId}: ${rawComment}`);
+             io.emit('new_guess', {
+                uniqueId: data.uniqueId,
+                nickname: data.nickname,
+                word: rawComment, // Kirim command apa adanya
+                picture: data.profilePictureUrl
+            });
+            return; // Stop proses tebakan, ini cuma command
+        }
+
+        // --- 2. HANDLING TEBAKAN GAME ---
         if (rawComment.length > MAX_RAW_LENGTH) return;
         if (rawComment.length < 3) return;
         
@@ -138,7 +153,7 @@ function connectToTikTok(username) {
         });
     });
 
-    // --- PERBAIKAN: EVENT LISTENER UNTUK LIKE ---
+    // --- EVENT LISTENER UNTUK LIKE ---
     tiktokLiveConnection.on('like', data => {
         io.emit('like', {
             uniqueId: data.uniqueId,

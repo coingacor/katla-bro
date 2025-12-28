@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#0f172a">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Katla Live (Multi-Server Support)</title>
+    <title>Katla Live (Winner Privilege)</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -461,6 +461,38 @@
             70% { box-shadow: 0 0 0 10px rgba(219, 39, 119, 0); }
             100% { box-shadow: 0 0 0 0 rgba(219, 39, 119, 0); }
         }
+        
+        /* VIP BANNER */
+        .vip-banner {
+            width: 100%;
+            background: linear-gradient(90deg, #ca8a04, #facc15, #ca8a04);
+            color: #000;
+            text-align: center;
+            padding: 8px;
+            font-weight: 900;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            box-shadow: 0 4px 15px rgba(250, 204, 21, 0.4);
+            animation: vipSlideIn 0.3s ease-out;
+            position: relative;
+            z-index: 100;
+            border-bottom: 2px solid #fff;
+        }
+        
+        .vip-timer-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            background: #000;
+            width: 100%;
+            transition: width 1s linear;
+        }
+        
+        @keyframes vipSlideIn {
+            from { transform: translateY(-100%); }
+            to { transform: translateY(0); }
+        }
 
     </style>
 </head>
@@ -528,6 +560,15 @@
 
     <!-- GAME SCREEN -->
     <div id="game-screen" class="hidden-screen flex-col h-full w-full">
+        <!-- VIP NOTIFICATION BANNER -->
+        <div id="vip-banner" class="vip-banner hidden">
+            <div class="flex items-center justify-center gap-2">
+                <span class="text-xl">👑</span>
+                <span>PRIVILEGE: <span id="vip-name" class="underline">USERNAME</span> (15s)</span>
+            </div>
+            <div id="vip-timer" class="vip-timer-bar" style="width: 100%"></div>
+        </div>
+
         <header class="w-full flex justify-between items-center p-3 border-b border-white/10 bg-slate-900/80 backdrop-blur-md z-10 flex-shrink-0">
             <div class="flex gap-2 items-center">
                 <button onclick="backToMenu()" class="p-2 text-slate-400 hover:text-white transition bg-slate-800 rounded-lg active:scale-95">
@@ -568,9 +609,9 @@
             <div id="live-keyboard-blocker" class="hidden text-center text-slate-300 text-sm font-bold py-4 flex flex-col gap-2 bg-slate-900/80 rounded-xl border border-white/10 backdrop-blur">
                 <div class="flex items-center justify-center gap-2">
                     <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                    <span>LIVE INTERAKTIF AKTIF</span>
+                    <span id="live-status-text">LIVE INTERAKTIF AKTIF</span>
                 </div>
-                <span class="text-xs text-slate-500">Ketik jawaban di komentar TikTok!</span>
+                <span id="live-helper-text" class="text-xs text-slate-500">Ketik jawaban di komentar TikTok!</span>
                 <div id="live-hard-warning" class="hidden text-rose-500 font-black animate-pulse mt-1 border border-rose-500/30 bg-rose-500/10 rounded px-2 py-1 inline-block mx-auto text-xs">
                     ☠️ MODE SULIT / HARD MODE ☠️
                 </div>
@@ -1061,7 +1102,11 @@
             userStreaks: {}, 
             bannedUsers: [], 
             nextRoundBans: [],
-            guessedWords: new Set() // NEW: Track words guessed in current round
+            guessedWords: new Set(),
+            // --- VIP LOGIC ---
+            nextRoundVIP: null, // Store winner of prev round { userId, name }
+            vipModeActive: false,
+            vipTimer: null
         };
 
         // SAFETY HELPERS FOR DOM ACCESS
@@ -1106,14 +1151,23 @@
         // --- TTS HELPER FUNCTION ---
         function speak(text) {
             if (!CONFIG.enableTTS) return;
+
+            // FITUR BARU: Auto-mute saat ramai (Antrian > 5) untuk mencegah lag
+            // Browser sering nge-freeze jika dipaksa TTS saat banyak update DOM
+            if (state.isLiveMode && state.liveQueue.length > 5) {
+                return;
+            }
+
             if (!('speechSynthesis' in window)) return;
 
+            // Batalkan antrian suara sebelumnya agar tidak menumpuk (mengurangi delay)
             window.speechSynthesis.cancel();
 
             const utterance = new SpeechSynthesisUtterance(text);
             
             utterance.lang = CONFIG.lang === 'IDN' ? 'id-ID' : 'en-US';
-            utterance.rate = 1.1; 
+            // PERUBAHAN: Rate dinaikkan dari 1.1 ke 1.7 agar lebih ngebut & responsif
+            utterance.rate = 1.7; 
             utterance.pitch = 1.0;
 
             const voices = window.speechSynthesis.getVoices();
@@ -1423,6 +1477,14 @@
                 }
 
                 if (state.status === 'playing') {
+                    // --- VIP MODE CHECK ---
+                    // Jika mode VIP aktif, dan yang kirim BUKAN pemenang sebelumnya, abaikan.
+                    if (state.vipModeActive && state.nextRoundVIP) {
+                        if (uniqueId !== state.nextRoundVIP.userId) {
+                            return; // ABAIKAN ORANG LAIN
+                        }
+                    }
+
                     let text = rawComment.toUpperCase().replace(/[^A-Z]/g, '');
 
                     // FIX: Check Duplicate Guesses EARLY
@@ -1641,6 +1703,66 @@
             state.validDictionary = Array.from(combined);
         }
 
+        // --- NEW: VIP TIMER FUNCTION ---
+        function startVIPPeriod(user) {
+            state.vipModeActive = true;
+            state.nextRoundVIP = user;
+            
+            const banner = document.getElementById('vip-banner');
+            const nameEl = document.getElementById('vip-name');
+            const timerBar = document.getElementById('vip-timer');
+            const liveText = document.getElementById('live-status-text');
+            const helperText = document.getElementById('live-helper-text');
+            
+            if(banner) banner.classList.remove('hidden');
+            if(nameEl) nameEl.textContent = user.name;
+            
+            // Set Timer Animation
+            if(timerBar) {
+                timerBar.style.transition = 'none';
+                timerBar.style.width = '100%';
+                setTimeout(() => {
+                    timerBar.style.transition = 'width 15s linear';
+                    timerBar.style.width = '0%';
+                }, 50);
+            }
+            
+            // Update Keyboard Blocker Text
+            if(liveText) {
+                liveText.textContent = "🏆 RONDE KHUSUS PEMENANG";
+                liveText.classList.add("text-yellow-400");
+            }
+            if(helperText) helperText.textContent = `Hanya ${user.name} yang bisa menebak!`;
+            
+            speak(`Waktu khusus 15 detik untuk pemenang, ${user.name}, silakan tebak duluan!`);
+            
+            // Clear existing timeout if any
+            if(state.vipTimer) clearTimeout(state.vipTimer);
+            
+            state.vipTimer = setTimeout(() => {
+                endVIPPeriod();
+            }, 15000);
+        }
+        
+        function endVIPPeriod() {
+            state.vipModeActive = false;
+            // Keep nextRoundVIP for reference if needed, but logic flag is off
+            
+            const banner = document.getElementById('vip-banner');
+            const liveText = document.getElementById('live-status-text');
+            const helperText = document.getElementById('live-helper-text');
+            
+            if(banner) banner.classList.add('hidden');
+            
+            if(liveText) {
+                liveText.textContent = "LIVE INTERAKTIF AKTIF";
+                liveText.classList.remove("text-yellow-400");
+            }
+            if(helperText) helperText.textContent = "Ketik jawaban di komentar TikTok!";
+            
+            speak("Waktu habis! Sekarang semua orang bisa ikut menebak!");
+        }
+
         function initGame() {
             state.bannedUsers = [...state.nextRoundBans];
             state.nextRoundBans = [];
@@ -1665,7 +1787,6 @@
             }
 
             if (state.secretWord.length !== CONFIG.wordLength) {
-                console.warn(`Word length mismatch! Expected ${CONFIG.wordLength}, got ${state.secretWord.length}. Generating fallback.`);
                 let fixWord = "GAME";
                 while(fixWord.length < CONFIG.wordLength) fixWord += "X";
                 if(fixWord.length > CONFIG.wordLength) fixWord = fixWord.substring(0, CONFIG.wordLength);
@@ -1674,6 +1795,20 @@
 
             renderGrid();
             if(!state.isLiveMode) renderKeyboard();
+
+            // --- TRIGGER VIP CHECK ---
+            if (state.isLiveMode && state.nextRoundVIP) {
+                // Pastikan user tidak di-banned
+                if (!state.bannedUsers.includes(state.nextRoundVIP.userId)) {
+                    startVIPPeriod(state.nextRoundVIP);
+                } else {
+                    state.nextRoundVIP = null; // Clear if banned
+                }
+            } else {
+                // Ensure VIP UI is hidden if no VIP
+                 const banner = document.getElementById('vip-banner');
+                 if(banner) banner.classList.add('hidden');
+            }
         }
 
         function renderGrid() {
@@ -1818,6 +1953,13 @@
             
             state.guessedWords.add(guess);
             
+            // --- VIP: JIKA GUESS VALID, MATIKAN VIP MODE JIKA PENGIRIM ADALAH VIP ---
+            if (state.vipModeActive && state.lastGuesser && state.nextRoundVIP) {
+                 if (state.lastGuesser.userId === state.nextRoundVIP.userId) {
+                     endVIPPeriod(); // Pemenang sudah menebak, buka untuk umum
+                 }
+            }
+            
             revealRow(guess, staggerDelay);
             return true;
         }
@@ -1924,6 +2066,9 @@
         function handleWin() {
             state.status = 'won';
             let winMsg = ""; 
+            
+            // Clear existing VIP
+            state.nextRoundVIP = null;
 
             if (state.isLiveMode && state.lastGuesser) {
                 const user = state.lastGuesser;
@@ -1944,12 +2089,17 @@
                     state.userStreaks[user.userId] = 0; 
                     showToast(`⛔ ${user.name} Menang 3x! Istirahat 1 Ronde!`);
                     winMsg = `Hebat ${user.name}! Tapi istirahat dulu satu game ya!`;
+                    // VIP CANCELLED DUE TO BAN
+                    state.nextRoundVIP = null;
                 } else {
                     let rawMsg = getRandomMsg('WIN');
                     winMsg = rawMsg.replace('{name}', user.name);
                     if (!rawMsg.includes('{name}')) {
                          winMsg = `${user.name}, ${winMsg}`;
                     }
+                    
+                    // --- SET NEXT ROUND VIP ---
+                    state.nextRoundVIP = { userId: user.userId, name: user.name };
                 }
                 
                 speak(winMsg); 
